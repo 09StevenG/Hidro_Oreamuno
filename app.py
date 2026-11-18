@@ -85,7 +85,6 @@ GROUP_COLORS = {
     4: ("Grupo D", "#de2d26"),
 }
 
-# Paleta continua: azul -> cian -> amarillo -> naranja -> rojo
 CONTINUOUS_COLORS = [
     "#313695",
     "#4575b4",
@@ -795,7 +794,6 @@ def show_raster_map(
             returned_objects=[],
         )
 
-        # Leyenda visible debajo del mapa
         st.markdown("#### Simbología cartográfica")
 
         if legend["type"] == "categorical":
@@ -972,6 +970,7 @@ with st.sidebar:
             "Precipitación",
             "Contexto hidrológico",
             "Cobertura y grupos hidrológicos",
+            "Reporte de incidentes",
             "Metodología e inventario",
         ],
     )
@@ -1597,6 +1596,17 @@ elif page == "Cobertura y grupos hidrológicos":
             st.info(
                 "No se encontró un ráster CN II en el repositorio."
             )
+
+
+# ============================================================
+# REPORTE DE INCIDENTES
+# ============================================================
+
+elif page == "Reporte de incidentes":
+
+    from incidentes import render_incidentes
+
+    render_incidentes(districts)
 
 
 # ============================================================
