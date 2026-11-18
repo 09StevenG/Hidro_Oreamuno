@@ -11,3 +11,4 @@ pyogrio
 supabase
 folium
 streamlit-folium
+shapely
