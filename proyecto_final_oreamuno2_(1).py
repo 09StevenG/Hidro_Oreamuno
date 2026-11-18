@@ -54,6 +54,7 @@ def consultar_servicio(url):
 cantones = consultar_servicio(URL_CANTONES)
 distritos = consultar_servicio(URL_DISTRITOS)
 
+
 print("Cantones:", len(cantones))
 print("Distritos:", len(distritos))
 
