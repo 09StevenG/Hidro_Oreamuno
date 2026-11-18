@@ -6,3 +6,5 @@ rasterio
 folium
 streamlit-folium
 pillow
+plotly
+pyogrio
