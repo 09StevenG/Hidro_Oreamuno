@@ -1,0 +1,8 @@
+streamlit
+geopandas
+pandas
+numpy
+rasterio
+folium
+streamlit-folium
+pillow
