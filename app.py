@@ -45,7 +45,11 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-COLORS = {
+# ============================================================
+# PALETAS CARTOGRÁFICAS
+# ============================================================
+
+SUS_COLORS = {
     1: "#2c7bb6",
     2: "#abd9e9",
     3: "#ffffbf",
@@ -53,7 +57,7 @@ COLORS = {
     5: "#d7191c",
 }
 
-CLASS_NAMES = {
+SUS_NAMES = {
     1: "Muy baja",
     2: "Baja",
     3: "Moderada",
@@ -61,31 +65,81 @@ CLASS_NAMES = {
     5: "Muy alta",
 }
 
+WORLDCOVER = {
+    10: ("Árboles", "#006400"),
+    20: ("Matorral", "#ffbb22"),
+    30: ("Pastizales", "#ffff4c"),
+    40: ("Cultivos", "#f096ff"),
+    50: ("Construcciones", "#fa0000"),
+    60: ("Suelo desnudo", "#b4b4b4"),
+    70: ("Nieve y hielo", "#f0f0f0"),
+    80: ("Agua", "#0064c8"),
+    90: ("Humedales herbáceos", "#0096a0"),
+    95: ("Manglares", "#00cf75"),
+    100: ("Musgos y líquenes", "#fae6a0"),
+}
+
+GROUP_COLORS = {
+    2: ("Grupo B", "#2ca25f"),
+    3: ("Grupo C", "#fec44f"),
+    4: ("Grupo D", "#de2d26"),
+}
+
+# Paleta continua: azul -> cian -> amarillo -> naranja -> rojo
+CONTINUOUS_COLORS = [
+    "#313695",
+    "#4575b4",
+    "#74add1",
+    "#abd9e9",
+    "#e0f3f8",
+    "#ffffbf",
+    "#fee090",
+    "#fdae61",
+    "#f46d43",
+    "#d73027",
+]
+
 
 # ============================================================
-# UTILIDADES
+# UTILIDADES DE ARCHIVOS
 # ============================================================
 
 @st.cache_data(show_spinner=False)
 def locate_file(filename):
-    """Busca un archivo por nombre en las carpetas del proyecto."""
+
     for folder in FOLDERS:
+
+        if not folder.exists():
+            continue
+
         candidate = folder / filename
+
         if candidate.exists():
-            return candidate
+            return str(candidate)
+
+        matches = list(folder.rglob(filename))
+
+        if matches:
+            return str(matches[0])
+
     return None
 
 
 def get_files():
-    files = []
+
     extensions = {
         ".tif", ".tiff", ".gpkg", ".shp",
         ".geojson", ".csv", ".png", ".jpg", ".jpeg"
     }
 
+    files = []
+
     for folder in FOLDERS:
+
         if folder.exists():
+
             for path in folder.rglob("*"):
+
                 if path.is_file() and path.suffix.lower() in extensions:
                     files.append(path)
 
@@ -94,11 +148,13 @@ def get_files():
 
 @st.cache_data(show_spinner=False)
 def read_csv_file(path):
+
     return pd.read_csv(path, encoding="utf-8-sig")
 
 
 @st.cache_data(show_spinner=False)
 def read_vector_file(path):
+
     gdf = gpd.read_file(path)
 
     if gdf.empty or gdf.crs is None:
@@ -109,7 +165,9 @@ def read_vector_file(path):
 
 @st.cache_data(show_spinner=False)
 def get_raster_info(path):
+
     with rasterio.open(path) as src:
+
         return {
             "crs": str(src.crs),
             "width": src.width,
@@ -121,9 +179,195 @@ def get_raster_info(path):
         }
 
 
+# ============================================================
+# MAPAS BASE
+# ============================================================
+
+def crear_mapa_base(location, zoom_start=11):
+
+    m = folium.Map(
+        location=location,
+        zoom_start=zoom_start,
+        tiles=None,
+        control_scale=True,
+    )
+
+    folium.TileLayer(
+        "CartoDB positron",
+        name="Mapa base | CartoDB",
+        overlay=False,
+        control=True,
+        show=True,
+    ).add_to(m)
+
+    folium.TileLayer(
+        tiles=(
+            "https://server.arcgisonline.com/ArcGIS/rest/services/"
+            "World_Imagery/MapServer/tile/{z}/{y}/{x}"
+        ),
+        attr="Tiles © Esri",
+        name="Satélite | Esri World Imagery",
+        overlay=False,
+        control=True,
+        show=False,
+    ).add_to(m)
+
+    folium.TileLayer(
+        "OpenStreetMap",
+        name="Calles | OpenStreetMap",
+        overlay=False,
+        control=True,
+        show=False,
+    ).add_to(m)
+
+    return m
+
+
+# ============================================================
+# FUNCIONES DE SIMBOLOGÍA
+# ============================================================
+
+def hex_to_rgb(color):
+
+    color = color.lstrip("#")
+
+    return tuple(
+        int(color[i:i + 2], 16)
+        for i in (0, 2, 4)
+    )
+
+
+def interpolar_color(value, low, high):
+
+    palette = [hex_to_rgb(c) for c in CONTINUOUS_COLORS]
+
+    if high <= low:
+        position = 0.5
+    else:
+        position = np.clip(
+            (value - low) / (high - low),
+            0,
+            1,
+        )
+
+    scaled = position * (len(palette) - 1)
+
+    index = min(int(scaled), len(palette) - 2)
+
+    fraction = scaled - index
+
+    color1 = np.array(palette[index])
+    color2 = np.array(palette[index + 1])
+
+    rgb = (
+        color1 * (1 - fraction)
+        + color2 * fraction
+    ).astype(int)
+
+    return tuple(rgb)
+
+
+def crear_leyenda_continua(
+    title,
+    minimum,
+    maximum,
+    units="",
+):
+
+    values = np.linspace(minimum, maximum, 5)
+
+    gradient = ", ".join(CONTINUOUS_COLORS)
+
+    st.markdown(
+        f"""
+        <div style="
+            padding:14px;
+            border:1px solid rgba(128,128,128,.25);
+            border-radius:10px;
+            margin-top:8px;
+            margin-bottom:14px;
+        ">
+            <div style="
+                font-weight:650;
+                margin-bottom:10px;
+            ">
+                {title}
+            </div>
+
+            <div style="
+                height:17px;
+                border-radius:5px;
+                background:linear-gradient(
+                    to right, {gradient}
+                );
+            "></div>
+
+            <div style="
+                display:flex;
+                justify-content:space-between;
+                margin-top:7px;
+                font-size:12px;
+                color:inherit;
+            ">
+                <span>{minimum:,.2f} {units}</span>
+                <span>{values[1]:,.2f}</span>
+                <span>{values[2]:,.2f}</span>
+                <span>{values[3]:,.2f}</span>
+                <span>{maximum:,.2f} {units}</span>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def crear_leyenda_categorica(title, categories):
+
+    st.markdown(f"**{title}**")
+
+    columns = st.columns(min(len(categories), 5))
+
+    for i, (name, color) in enumerate(categories):
+
+        with columns[i % len(columns)]:
+
+            st.markdown(
+                f"""
+                <div style="
+                    display:flex;
+                    align-items:center;
+                    gap:7px;
+                    margin-bottom:10px;
+                    font-size:13px;
+                ">
+                    <span style="
+                        display:inline-block;
+                        width:17px;
+                        height:17px;
+                        min-width:17px;
+                        background:{color};
+                        border:1px solid rgba(0,0,0,.25);
+                        border-radius:3px;
+                    "></span>
+                    <span>{name}</span>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+
+# ============================================================
+# CONVERSIÓN DE RÁSTER A PNG
+# ============================================================
+
 @st.cache_data(show_spinner=False)
-def raster_to_png(path, categorical=False, opacity=0.78, max_dim=1600):
-    """Convierte un GeoTIFF en una imagen PNG georreferenciada para Folium."""
+def raster_to_png(
+    path,
+    categorical=False,
+    category_type=None,
+    opacity=0.85,
+    max_dim=1600,
+):
 
     with rasterio.open(path) as src:
 
@@ -138,9 +382,13 @@ def raster_to_png(path, categorical=False, opacity=0.78, max_dim=1600):
             *src.bounds,
         )
 
-        scale = min(1, max_dim / max(width, height))
+        scale = min(
+            1,
+            max_dim / max(width, height),
+        )
 
         if scale < 1:
+
             width = max(1, int(width * scale))
             height = max(1, int(height * scale))
 
@@ -160,7 +408,11 @@ def raster_to_png(path, categorical=False, opacity=0.78, max_dim=1600):
             dtype="float32",
         )
 
-        source = src.read(1, masked=True).astype("float32").filled(np.nan)
+        source = (
+            src.read(1, masked=True)
+            .astype("float32")
+            .filled(np.nan)
+        )
 
         reproject(
             source=source,
@@ -180,60 +432,201 @@ def raster_to_png(path, categorical=False, opacity=0.78, max_dim=1600):
 
         valid = np.isfinite(destination)
 
-        rgba = np.zeros((height, width, 4), dtype=np.uint8)
+        rgba = np.zeros(
+            (height, width, 4),
+            dtype=np.uint8,
+        )
 
-        if categorical:
+        legend = {}
 
-            for cls, color in COLORS.items():
+        if not valid.any():
 
-                rgb = tuple(
-                    int(color[i:i + 2], 16)
-                    for i in (1, 3, 5)
-                )
+            raise ValueError("El ráster no contiene píxeles válidos.")
 
-                mask = valid & (
-                    np.rint(destination).astype("int32") == cls
-                )
+        # ----------------------------------------------------
+        # SUSCEPTIBILIDAD
+        # ----------------------------------------------------
 
-                rgba[mask, :3] = rgb
+        if category_type == "susceptibility":
+
+            values = np.zeros(
+                destination.shape,
+                dtype=np.int32,
+            )
+
+            values[valid] = np.rint(
+                destination[valid]
+            ).astype(int)
+
+            for cls, color in SUS_COLORS.items():
+
+                mask = valid & (values == cls)
+
+                rgba[mask, :3] = hex_to_rgb(color)
                 rgba[mask, 3] = int(255 * opacity)
+
+            legend = {
+                "type": "categorical",
+                "title": "Susceptibilidad a inundaciones",
+                "categories": [
+                    (f"{k}. {SUS_NAMES[k]}", v)
+                    for k, v in SUS_COLORS.items()
+                ],
+            }
+
+        # ----------------------------------------------------
+        # WORLDCOVER
+        # ----------------------------------------------------
+
+        elif category_type == "worldcover":
+
+            values = np.zeros(
+                destination.shape,
+                dtype=np.int32,
+            )
+
+            values[valid] = np.rint(
+                destination[valid]
+            ).astype(int)
+
+            categories = []
+
+            for code, (name, color) in WORLDCOVER.items():
+
+                mask = valid & (values == code)
+
+                rgba[mask, :3] = hex_to_rgb(color)
+                rgba[mask, 3] = int(255 * opacity)
+
+                if mask.any():
+                    categories.append((name, color))
+
+            legend = {
+                "type": "categorical",
+                "title": "Cobertura terrestre | WorldCover 2021",
+                "categories": categories,
+            }
+
+        # ----------------------------------------------------
+        # GRUPOS HIDROLÓGICOS
+        # ----------------------------------------------------
+
+        elif category_type == "groups":
+
+            values = np.zeros(
+                destination.shape,
+                dtype=np.int32,
+            )
+
+            values[valid] = np.rint(
+                destination[valid]
+            ).astype(int)
+
+            categories = []
+
+            for code, (name, color) in GROUP_COLORS.items():
+
+                mask = valid & (values == code)
+
+                rgba[mask, :3] = hex_to_rgb(color)
+                rgba[mask, 3] = int(255 * opacity)
+
+                if mask.any():
+                    categories.append((name, color))
+
+            legend = {
+                "type": "categorical",
+                "title": "Grupos hidrológicos del suelo",
+                "categories": categories,
+            }
+
+        # ----------------------------------------------------
+        # VARIABLES CONTINUAS
+        # ----------------------------------------------------
 
         else:
 
-            if valid.any():
+            low, high = np.nanpercentile(
+                destination[valid],
+                [2, 98],
+            )
 
-                low, high = np.nanpercentile(
-                    destination[valid],
-                    [2, 98],
+            if high <= low:
+                high = low + 1
+
+            normalized = np.zeros(
+                destination.shape,
+                dtype=np.float32,
+            )
+
+            normalized[valid] = np.clip(
+                (destination[valid] - low)
+                / (high - low),
+                0,
+                1,
+            )
+
+            for index in range(len(CONTINUOUS_COLORS) - 1):
+
+                lower = index / (
+                    len(CONTINUOUS_COLORS) - 1
                 )
 
-                if high <= low:
-                    high = low + 1
-
-                normalized = np.clip(
-                    (destination - low) / (high - low),
-                    0,
-                    1,
+                upper = (index + 1) / (
+                    len(CONTINUOUS_COLORS) - 1
                 )
 
-                rgba[..., 0] = (
-                    normalized * 210 + 35
-                ).astype("uint8")
+                mask = (
+                    valid
+                    & (normalized >= lower)
+                    & (
+                        normalized <= upper
+                        if index == len(CONTINUOUS_COLORS) - 2
+                        else normalized < upper
+                    )
+                )
 
-                rgba[..., 1] = (
-                    normalized * 210 + 35
-                ).astype("uint8")
+                if mask.any():
 
-                rgba[..., 2] = (
-                    normalized * 210 + 35
-                ).astype("uint8")
+                    positions = (
+                        (normalized[mask] - lower)
+                        / (upper - lower)
+                    )
 
-                rgba[..., 3][valid] = int(255 * opacity)
+                    c1 = np.array(
+                        hex_to_rgb(CONTINUOUS_COLORS[index])
+                    )
+
+                    c2 = np.array(
+                        hex_to_rgb(CONTINUOUS_COLORS[index + 1])
+                    )
+
+                    colors = (
+                        c1[None, :]
+                        * (1 - positions[:, None])
+                        + c2[None, :]
+                        * positions[:, None]
+                    ).astype(np.uint8)
+
+                    rgba[mask, :3] = colors
+
+            rgba[..., 3][valid] = int(255 * opacity)
+
+            legend = {
+                "type": "continuous",
+                "minimum": float(low),
+                "maximum": float(high),
+            }
 
         image = Image.fromarray(rgba, mode="RGBA")
 
         buffer = io.BytesIO()
-        image.save(buffer, format="PNG", optimize=True)
+
+        image.save(
+            buffer,
+            format="PNG",
+            optimize=True,
+        )
 
         encoded = base64.b64encode(
             buffer.getvalue()
@@ -249,10 +642,22 @@ def raster_to_png(path, categorical=False, opacity=0.78, max_dim=1600):
         return (
             f"data:image/png;base64,{encoded}",
             [[south, west], [north, east]],
+            legend,
         )
 
 
-def add_vector(m, gdf, name, color="#333333", weight=2, fill=False):
+# ============================================================
+# VECTORES Y CENTRO DEL MAPA
+# ============================================================
+
+def add_vector(
+    m,
+    gdf,
+    name,
+    color="#333333",
+    weight=2,
+    fill=False,
+):
 
     if gdf is None:
         return
@@ -265,6 +670,7 @@ def add_vector(m, gdf, name, color="#333333", weight=2, fill=False):
     tooltip = None
 
     if fields:
+
         tooltip = folium.GeoJsonTooltip(
             fields=fields,
             aliases=fields,
@@ -287,40 +693,61 @@ def add_vector(m, gdf, name, color="#333333", weight=2, fill=False):
 def get_center(canton):
 
     if canton is not None:
+
         try:
-            centroid = canton.geometry.union_all().centroid
-            return [centroid.y, centroid.x]
+
+            try:
+                union_geometry = canton.geometry.union_all()
+            except AttributeError:
+                union_geometry = canton.geometry.unary_union
+
+            centroid = union_geometry.centroid
+
+            return [
+                centroid.y,
+                centroid.x,
+            ]
+
         except Exception:
             pass
 
     return [9.90, -83.87]
 
 
+# ============================================================
+# VISUALIZACIÓN DE RÁSTERES
+# ============================================================
+
 def show_raster_map(
     raster_path,
     title,
     categorical=False,
+    category_type=None,
+    units="",
     canton=None,
     districts=None,
     drainage=None,
 ):
 
     if raster_path is None:
-        st.warning(f"No se encontró el archivo correspondiente a {title}.")
+
+        st.warning(
+            f"No se encontró el archivo correspondiente a {title}."
+        )
+
         return
 
     try:
 
-        image, bounds = raster_to_png(
+        image, bounds, legend = raster_to_png(
             raster_path,
             categorical=categorical,
+            category_type=category_type,
         )
 
-        m = folium.Map(
+        m = crear_mapa_base(
             location=get_center(canton),
             zoom_start=11,
-            tiles="CartoDB positron",
-            control_scale=True,
         )
 
         ImageOverlay(
@@ -357,7 +784,9 @@ def show_raster_map(
             3,
         )
 
-        folium.LayerControl(collapsed=False).add_to(m)
+        folium.LayerControl(
+            collapsed=False
+        ).add_to(m)
 
         st_folium(
             m,
@@ -366,8 +795,37 @@ def show_raster_map(
             returned_objects=[],
         )
 
+        # Leyenda visible debajo del mapa
+        st.markdown("#### Simbología cartográfica")
+
+        if legend["type"] == "categorical":
+
+            crear_leyenda_categorica(
+                legend["title"],
+                legend["categories"],
+            )
+
+        else:
+
+            crear_leyenda_continua(
+                title=title,
+                minimum=legend["minimum"],
+                maximum=legend["maximum"],
+                units=units,
+            )
+
+            st.caption(
+                "La escala utiliza los percentiles 2 y 98 "
+                "de los píxeles válidos para mejorar el contraste. "
+                "Los valores extremos pueden quedar fuera del rango "
+                "representado en la leyenda."
+            )
+
     except Exception as exc:
-        st.error(f"No fue posible representar {title}: {exc}")
+
+        st.error(
+            f"No fue posible representar {title}: {exc}"
+        )
 
 
 def show_png(filename, caption=None):
@@ -375,12 +833,20 @@ def show_png(filename, caption=None):
     path = locate_file(filename)
 
     if path is not None:
-        st.image(str(path), use_container_width=True)
+
+        st.image(
+            str(path),
+            use_container_width=True,
+        )
 
         if caption:
             st.caption(caption)
+
     else:
-        st.info(f"Producto cartográfico no encontrado: {filename}")
+
+        st.info(
+            f"Producto cartográfico no encontrado: {filename}"
+        )
 
 
 # ============================================================
@@ -443,13 +909,24 @@ rainfall_files = {
     ),
 }
 
-canton = read_vector_file(canton_path) if canton_path else None
-districts = read_vector_file(district_path) if district_path else None
-drainage = read_vector_file(drainage_path) if drainage_path else None
+canton = (
+    read_vector_file(canton_path)
+    if canton_path else None
+)
+
+districts = (
+    read_vector_file(district_path)
+    if district_path else None
+)
+
+drainage = (
+    read_vector_file(drainage_path)
+    if drainage_path else None
+)
 
 
 # ============================================================
-# ESTILO Y NAVEGACIÓN
+# ESTILO
 # ============================================================
 
 st.markdown("""
@@ -458,13 +935,23 @@ st.markdown("""
     padding-top: 1.5rem;
     padding-bottom: 2rem;
 }
+
 [data-testid="stMetric"] {
     background: rgba(120, 120, 120, 0.07);
     padding: 15px;
     border-radius: 10px;
 }
+
+h1, h2, h3 {
+    letter-spacing: -0.3px;
+}
 </style>
 """, unsafe_allow_html=True)
+
+
+# ============================================================
+# NAVEGACIÓN
+# ============================================================
 
 with st.sidebar:
 
@@ -539,6 +1026,7 @@ if page == "Inicio":
         sus_path,
         "Susceptibilidad a inundaciones",
         categorical=True,
+        category_type="susceptibility",
         canton=canton,
         districts=districts,
     )
@@ -549,32 +1037,26 @@ if page == "Inicio":
 
     x1, x2, x3 = st.columns(3)
 
-    x1.markdown(
-        """
-        **Susceptibilidad**
+    x1.markdown("""
+    **Susceptibilidad**
 
-        Consulta del resultado clasificado,
-        índice continuo y distribución territorial.
-        """
-    )
+    Consulta del resultado clasificado,
+    índice continuo y distribución territorial.
+    """)
 
-    x2.markdown(
-        """
-        **Contexto hidrológico**
+    x2.markdown("""
+    **Contexto hidrológico**
 
-        Precipitación, drenaje, relieve,
-        acumulación de flujo y áreas de aporte.
-        """
-    )
+    Precipitación, drenaje, relieve,
+    acumulación de flujo y áreas de aporte.
+    """)
 
-    x3.markdown(
-        """
-        **Contexto territorial**
+    x3.markdown("""
+    **Contexto territorial**
 
-        Cobertura del suelo y grupos
-        hidrológicos del territorio.
-        """
-    )
+    Cobertura del suelo y grupos
+    hidrológicos del territorio.
+    """)
 
 
 # ============================================================
@@ -602,31 +1084,11 @@ elif page == "Susceptibilidad":
             sus_path,
             "Susceptibilidad en cinco clases",
             categorical=True,
+            category_type="susceptibility",
             canton=canton,
             districts=districts,
             drainage=drainage,
         )
-
-        st.markdown("### Leyenda")
-
-        cols = st.columns(5)
-
-        for cls, col in zip(range(1, 6), cols):
-
-            col.markdown(
-                f"""
-                <div style="
-                    background:{COLORS[cls]};
-                    padding:12px;
-                    border-radius:7px;
-                    text-align:center;
-                    color:#111;
-                    font-weight:600;">
-                    Clase {cls}<br>{CLASS_NAMES[cls]}
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
 
     with tab2:
 
@@ -693,14 +1155,17 @@ elif page == "Susceptibilidad":
                 hide_index=True,
             )
 
-            total_area = df["Area_km2"].sum()
+            if "Area_km2" in df.columns:
 
-            st.metric(
-                "Área representada por la clasificación",
-                f"{total_area:,.2f} km²",
-            )
+                total_area = df["Area_km2"].sum()
+
+                st.metric(
+                    "Área representada por la clasificación",
+                    f"{total_area:,.2f} km²",
+                )
 
         else:
+
             st.warning(
                 "No se encontró el CSV de distribución."
             )
@@ -759,11 +1224,18 @@ elif page == "Precipitación":
 
     raster = rainfall_files[selected]
 
+    units = (
+        "%"
+        if "variación" in selected.lower()
+        else "mm"
+    )
+
     if raster:
 
         show_raster_map(
             raster,
             selected,
+            units=units,
             canton=canton,
             districts=districts,
         )
@@ -793,9 +1265,9 @@ elif page == "Precipitación":
         anuales, la variabilidad interanual y la desviación
         estándar durante el periodo analizado.
 
-        Estas capas representan características históricas
-        de la precipitación y no condiciones meteorológicas
-        actuales.
+        Las capas de precipitación representan características
+        históricas del periodo 1981–2025 y no condiciones
+        meteorológicas actuales.
         """
     )
 
@@ -850,11 +1322,9 @@ elif page == "Contexto hidrológico":
             ],
         )
 
-        m = folium.Map(
+        m = crear_mapa_base(
             location=get_center(canton),
             zoom_start=11,
-            tiles="CartoDB positron",
-            control_scale=True,
         )
 
         add_vector(
@@ -872,6 +1342,8 @@ elif page == "Contexto hidrológico":
             "#555555",
             1,
         )
+
+        raster_legends = []
 
         for name in selected:
 
@@ -891,10 +1363,10 @@ elif page == "Contexto hidrológico":
 
                 try:
 
-                    image, bounds = raster_to_png(
+                    image, bounds, legend = raster_to_png(
                         obj,
                         categorical=False,
-                        opacity=0.55,
+                        opacity=0.75,
                     )
 
                     ImageOverlay(
@@ -905,6 +1377,8 @@ elif page == "Contexto hidrológico":
                         interactive=True,
                         cross_origin=False,
                     ).add_to(m)
+
+                    raster_legends.append((name, legend))
 
                 except Exception as exc:
 
@@ -922,6 +1396,19 @@ elif page == "Contexto hidrológico":
             height=600,
             returned_objects=[],
         )
+
+        if raster_legends:
+
+            st.markdown("#### Leyendas de las capas")
+
+            for name, legend in raster_legends:
+
+                crear_leyenda_continua(
+                    name,
+                    legend["minimum"],
+                    legend["maximum"],
+                    units="",
+                )
 
     if drainage is not None:
 
@@ -968,6 +1455,7 @@ elif page == "Cobertura y grupos hidrológicos":
             cover_path,
             "Cobertura terrestre WorldCover 2021",
             categorical=True,
+            category_type="worldcover",
             canton=canton,
             districts=districts,
         )
@@ -989,6 +1477,7 @@ elif page == "Cobertura y grupos hidrológicos":
             groups_path,
             "Grupos hidrológicos",
             categorical=True,
+            category_type="groups",
             canton=canton,
             districts=districts,
         )
@@ -1007,12 +1496,18 @@ elif page == "Cobertura y grupos hidrológicos":
                 df,
                 x="Codigo",
                 y="Porcentaje",
+                color="Codigo",
                 text_auto=".2f",
                 title="Distribución territorial por grupo",
                 labels={
                     "Codigo": "Código del grupo",
                     "Porcentaje": "Área (%)",
                 },
+                color_discrete_sequence=[
+                    "#2ca25f",
+                    "#fec44f",
+                    "#de2d26",
+                ],
             )
 
             st.plotly_chart(
@@ -1050,6 +1545,11 @@ elif page == "Cobertura y grupos hidrológicos":
                     "Area_km2": "Área (km²)",
                     "Grupo": "Grupo hidrológico",
                 },
+                color_discrete_sequence=[
+                    "#2ca25f",
+                    "#fec44f",
+                    "#de2d26",
+                ],
             )
 
             st.plotly_chart(
@@ -1087,6 +1587,7 @@ elif page == "Cobertura y grupos hidrológicos":
             show_raster_map(
                 cn_path,
                 "Número de curva CN II",
+                units="CN",
                 canton=canton,
                 districts=districts,
             )
@@ -1208,12 +1709,14 @@ elif page == "Metodología e inventario":
 
                     try:
 
-                        info = get_raster_info(path)
+                        info = get_raster_info(str(path))
 
                         row["CRS"] = info["crs"]
+
                         row["Dimensiones"] = (
                             f"{info['width']} × {info['height']}"
                         )
+
                         row["Resolución"] = (
                             f"{info['resolution'][0]:.3f} × "
                             f"{info['resolution'][1]:.3f}"
