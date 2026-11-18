@@ -1,0 +1,7 @@
+﻿Codigo_WorldCover,Cobertura,Equivalencia,CN_B,CN_C,CN_D
+10,Árboles,Bosque - buena condición,55,70,77
+20,Matorral,Arbustos - buena condición,48,65,73
+30,Pastizales,Pastura - condición regular,69,79,84
+40,Cultivos,Cultivo en hileras - buena condición,78,85,89
+60,Suelo desnudo,Barbecho / suelo descubierto,86,91,94
+80,Agua,Agua superficial,100,100,100
