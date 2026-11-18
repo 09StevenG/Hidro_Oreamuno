@@ -8,3 +8,6 @@ streamlit-folium
 pillow
 plotly
 pyogrio
+supabase
+folium
+streamlit-folium
